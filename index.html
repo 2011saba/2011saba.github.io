@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RunTech: Sensor Fusion Demo</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            overflow-x: hidden;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+        }
+        canvas {
+            touch-action: none;
+        }
+        .metric-value {
+            font-variant-numeric: tabular-nums;
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Header -->
+    <header class="p-4 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 backdrop-blur">
+        <div class="max-w-6xl mx-auto flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-person-running text-emerald-400 text-2xl"></i>
+                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-cyan-500">
+                    RunTech <span class="text-slate-500 text-sm font-normal">Sensor Fusion</span>
+                </h1>
+            </div>
+            <div class="text-xs text-slate-400 flex items-center gap-2">
+                <span id="status-indicator" class="w-2 h-2 rounded-full bg-red-500"></span>
+                <span id="status-text">Idle</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow p-4 space-y-4 max-w-6xl mx-auto w-full">
+
+        <!-- Controls -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- Mode Selection -->
+            <div class="glass-panel p-4 flex flex-col justify-center gap-3">
+                <h2 class="text-sm uppercase tracking-wider text-slate-400 font-semibold">Operation Mode</h2>
+                <div class="flex gap-2">
+                    <button id="btn-simulate" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-sm font-medium flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-laptop-code"></i> Simulate Run
+                    </button>
+                    <button id="btn-track" class="flex-1 py-2 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-lg transition text-sm font-medium flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/50">
+                        <i class="fa-solid fa-satellite-dish"></i> Live Track
+                    </button>
+                </div>
+                <button id="btn-reset" class="w-full py-1 text-xs text-slate-500 hover:text-slate-300">
+                    Reset Data
+                </button>
+            </div>
+
+            <!-- Stats Dashboard -->
+            <div class="grid grid-cols-3 gap-2">
+                <div class="glass-panel p-3 flex flex-col items-center justify-center">
+                    <span class="text-xs text-slate-400">Steps</span>
+                    <span id="stat-steps" class="text-2xl font-bold text-white metric-value">0</span>
+                    <i class="fa-solid fa-shoe-prints text-slate-600 text-xs mt-1"></i>
+                </div>
+                <div class="glass-panel p-3 flex flex-col items-center justify-center">
+                    <span class="text-xs text-slate-400">Distance</span>
+                    <span id="stat-dist" class="text-2xl font-bold text-cyan-400 metric-value">0</span>
+                    <span class="text-[10px] text-slate-500">METERS</span>
+                </div>
+                <div class="glass-panel p-3 flex flex-col items-center justify-center">
+                    <span class="text-xs text-slate-400">Pace</span>
+                    <span id="stat-pace" class="text-2xl font-bold text-emerald-400 metric-value">--</span>
+                    <span class="text-[10px] text-slate-500">MIN/KM</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Visualizer (GPS Map) -->
+        <div class="glass-panel p-1 relative h-64 md:h-96 overflow-hidden">
+            <div class="absolute top-3 left-3 z-10 bg-slate-900/80 px-2 py-1 rounded text-xs border border-slate-700 pointer-events-none">
+                <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Raw GPS (Noisy)</div>
+                <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-cyan-400"></span> Sensor Fusion (Smoothed)</div>
+            </div>
+            <canvas id="mapCanvas" class="w-full h-full rounded-lg bg-slate-900 cursor-move"></canvas>
+            
+            <!-- Contextual Overlay for explaining concepts -->
+            <div id="simulation-overlay" class="hidden absolute bottom-4 left-4 right-4 bg-slate-800/90 p-3 rounded border border-yellow-500/30 text-xs text-yellow-100">
+                <i class="fa-solid fa-lightbulb text-yellow-400 mr-1"></i> 
+                <span id="simulation-text">Algorithm smoothing data...</span>
+            </div>
+        </div>
+
+        <!-- Accelerometer Data -->
+        <div class="glass-panel p-4">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-slate-300">Accelerometer (Step Detection)</h3>
+                <span id="g-force" class="text-xs font-mono text-slate-400">Total G: 1.00</span>
+            </div>
+            <div class="h-24 w-full">
+                <canvas id="accelChart"></canvas>
+            </div>
+            <div class="mt-2 text-[10px] text-slate-500 text-center">
+                Shows the "Total Magnitude" of forces. Spikes > Threshold = Step.
+            </div>
+        </div>
+
+        <!-- Explanation Section -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-400">
+            <div class="glass-panel p-3">
+                <strong class="text-slate-200 block mb-1">1. Raw Input</strong>
+                GPS satellites provide coordinates, but they "drift" due to signal reflection off buildings (Multipath error).
+            </div>
+            <div class="glass-panel p-3">
+                <strong class="text-slate-200 block mb-1">2. Kalman Filter</strong>
+                The app predicts your next spot based on previous speed. If raw GPS jumps too far, it's ignored/weighted down.
+            </div>
+            <div class="glass-panel p-3">
+                <strong class="text-slate-200 block mb-1">3. Dead Reckoning</strong>
+                If signal is lost, the accelerometer (step count) + compass estimates your path until GPS returns.
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // --- State Management ---
+        const state = {
+            isTracking: false,
+            isSimulating: false,
+            steps: 0,
+            distance: 0,
+            startTime: null,
+            path: [], // {x, y, type: 'raw' | 'smooth'}
+            currentPos: { x: 0, y: 0 },
+            velocity: { x: 0, y: 0 },
+            lastStepTime: 0,
+            simInterval: null
+        };
+
+        // --- DOM Elements ---
+        const btnTrack = document.getElementById('btn-track');
+        const btnSimulate = document.getElementById('btn-simulate');
+        const btnReset = document.getElementById('btn-reset');
+        const statusText = document.getElementById('status-text');
+        const statusInd = document.getElementById('status-indicator');
+        const elSteps = document.getElementById('stat-steps');
+        const elDist = document.getElementById('stat-dist');
+        const elPace = document.getElementById('stat-pace');
+        const elGForce = document.getElementById('g-force');
+        const simOverlay = document.getElementById('simulation-overlay');
+        const simText = document.getElementById('simulation-text');
+
+        // --- Chart.js Setup (Accelerometer) ---
+        const ctxAccel = document.getElementById('accelChart').getContext('2d');
+        const accelChart = new Chart(ctxAccel, {
+            type: 'line',
+            data: {
+                labels: Array(50).fill(''),
+                datasets: [{
+                    label: 'Force Magnitude',
+                    data: Array(50).fill(1),
+                    borderColor: '#10b981',
+                    borderWidth: 1.5,
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { min: 0, max: 2.5, grid: { color: '#334155' } },
+                    x: { display: false }
+                }
+            }
+        });
+
+        // --- Map Canvas Setup ---
+        const mapCanvas = document.getElementById('mapCanvas');
+        const ctxMap = mapCanvas.getContext('2d');
+        let mapScale = 4; // Zoom level
+        let mapOffset = { x: mapCanvas.width / 2, y: mapCanvas.height / 2 };
+
+        function resizeCanvas() {
+            mapCanvas.width = mapCanvas.offsetWidth;
+            mapCanvas.height = mapCanvas.offsetHeight;
+            mapOffset = { x: mapCanvas.width / 2, y: mapCanvas.height / 2 };
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- Logic: Drawing the Map ---
+        function drawMap() {
+            // Clear
+            ctxMap.fillStyle = '#0f172a';
+            ctxMap.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+
+            // Draw Grid
+            ctxMap.strokeStyle = '#1e293b';
+            ctxMap.lineWidth = 1;
+            const gridSize = 50;
+            const offX = mapOffset.x % gridSize;
+            const offY = mapOffset.y % gridSize;
+            
+            ctxMap.beginPath();
+            for(let x = offX; x < mapCanvas.width; x += gridSize) {
+                ctxMap.moveTo(x, 0);
+                ctxMap.lineTo(x, mapCanvas.height);
+            }
+            for(let y = offY; y < mapCanvas.height; y += gridSize) {
+                ctxMap.moveTo(0, y);
+                ctxMap.lineTo(mapCanvas.width, y);
+            }
+            ctxMap.stroke();
+
+            // We need to center the drawing on the current Smoothed position
+            const centerX = mapCanvas.width / 2;
+            const centerY = mapCanvas.height / 2;
+
+            // Draw Raw Points (Red)
+            state.path.forEach(p => {
+                if(p.type === 'raw') {
+                    const drawX = centerX + (p.x - state.currentPos.x) * mapScale;
+                    const drawY = centerY + (p.y - state.currentPos.y) * mapScale;
+                    
+                    ctxMap.fillStyle = 'rgba(239, 68, 68, 0.4)'; // Red with opacity
+                    ctxMap.beginPath();
+                    ctxMap.arc(drawX, drawY, 3, 0, Math.PI * 2);
+                    ctxMap.fill();
+                }
+            });
+
+            // Draw Smoothed Path (Cyan/Green)
+            ctxMap.beginPath();
+            ctxMap.strokeStyle = '#22d3ee';
+            ctxMap.lineWidth = 3;
+            let first = true;
+            state.path.forEach(p => {
+                if(p.type === 'smooth') {
+                    const drawX = centerX + (p.x - state.currentPos.x) * mapScale;
+                    const drawY = centerY + (p.y - state.currentPos.y) * mapScale;
+                    if(first) { ctxMap.moveTo(drawX, drawY); first = false; }
+                    else { ctxMap.lineTo(drawX, drawY); }
+                }
+            });
+            ctxMap.stroke();
+
+            // Draw User Marker
+            ctxMap.fillStyle = '#10b981';
+            ctxMap.beginPath();
+            ctxMap.arc(centerX, centerY, 6, 0, Math.PI * 2);
+            ctxMap.fill();
+            ctxMap.strokeStyle = '#fff';
+            ctxMap.lineWidth = 2;
+            ctxMap.stroke();
+            
+            // Pulse effect
+            const pulseSize = (Date.now() % 1000) / 1000 * 10;
+            ctxMap.strokeStyle = `rgba(16, 185, 129, ${1 - (pulseSize/10)})`;
+            ctxMap.beginPath();
+            ctxMap.arc(centerX, centerY, 6 + pulseSize, 0, Math.PI * 2);
+            ctxMap.stroke();
+        }
+
+        // --- Logic: Simulation Mode ---
+        function startSimulation() {
+            resetData();
+            state.isSimulating = true;
+            state.startTime = Date.now();
+            updateStatus('Simulating Run', 'bg-blue-500');
+            simOverlay.classList.remove('hidden');
+
+            let angle = 0;
+            const radius = 50; // meters
+            const center = { x: 0, y: 0 };
+            let stepTicker = 0;
+
+            state.simInterval = setInterval(() => {
+                // 1. Generate "True" Position (Circle)
+                angle += 0.05;
+                const trueX = center.x + Math.cos(angle) * radius;
+                const trueY = center.y + Math.sin(angle) * radius;
+
+                // 2. Generate "Noisy" GPS Reading (Raw Data)
+                // Add random error (Gaussian noise simulation)
+                const errorMagnitude = (Math.random() - 0.5) * 15; // +/- 7.5 meters error
+                const rawX = trueX + errorMagnitude;
+                const rawY = trueY + (Math.random() - 0.5) * 15;
+
+                // 3. Apply "Sensor Fusion" (Smoothing Algorithm)
+                // Simple weighted average (Kalman Filter Lite)
+                // New = Old * 0.8 + Raw * 0.2
+                const smoothFactor = 0.15; 
+                if (state.path.length === 0) {
+                    state.currentPos = { x: rawX, y: rawY };
+                } else {
+                    state.currentPos.x = state.currentPos.x * (1 - smoothFactor) + rawX * smoothFactor;
+                    state.currentPos.y = state.currentPos.y * (1 - smoothFactor) + rawY * smoothFactor;
+                }
+
+                // Update Data Arrays
+                state.path.push({ x: rawX, y: rawY, type: 'raw' });
+                state.path.push({ x: state.currentPos.x, y: state.currentPos.y, type: 'smooth' });
+
+                // Simulate Steps (Accelerometer)
+                stepTicker++;
+                let force = 1.0; // Gravity
+                if(stepTicker % 10 === 0) {
+                    force = 1.8 + Math.random() * 0.5; // Step impact
+                    registerStep();
+                } else {
+                    force = 1.0 + (Math.random() - 0.5) * 0.1; // Standing noise
+                }
+                updateAccelChart(force);
+
+                // Calculate Distance
+                if(state.path.length > 2) {
+                    // Simple distance calc between last two smooth points
+                    const prev = state.path[state.path.length - 3]; // -1 is smooth, -2 is raw
+                    if(prev && prev.type === 'smooth') {
+                        const dx = state.currentPos.x - prev.x;
+                        const dy = state.currentPos.y - prev.y;
+                        state.distance += Math.sqrt(dx*dx + dy*dy);
+                    }
+                }
+
+                updateUI();
+                drawMap();
+
+                // Contextual tips in simulation
+                if(Math.random() > 0.95) {
+                    const tips = [
+                        "GPS drifted! Ignoring outlier point.",
+                        "Signal valid. Updating position.",
+                        "Detecting step impact...",
+                        "Smoothing trajectory curve."
+                    ];
+                    simText.innerText = tips[Math.floor(Math.random() * tips.length)];
+                }
+
+            }, 200); // Update every 200ms
+        }
+
+        // --- Logic: Real Tracking ---
+        function startTracking() {
+            resetData();
+            simOverlay.classList.add('hidden');
+            
+            // Check for iOS permission requirements
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(response => {
+                        if (response === 'granted') {
+                            initSensors();
+                        } else {
+                            alert('Permission needed for step counting');
+                        }
+                    })
+                    .catch(console.error);
+            } else {
+                initSensors();
+            }
+        }
+
+        function initSensors() {
+            state.isTracking = true;
+            state.startTime = Date.now();
+            updateStatus('Tracking Live', 'bg-emerald-500');
+
+            // 1. Accelerometer (Step Counting)
+            window.addEventListener('devicemotion', handleMotion);
+
+            // 2. GPS
+            if("geolocation" in navigator) {
+                navigator.geolocation.watchPosition(
+                    handleGPS, 
+                    (err) => console.error(err),
+                    { enableHighAccuracy: true, maximumAge: 0 }
+                );
+            } else {
+                alert("Geolocation not supported on this device.");
+            }
+        }
+
+        let lastAccel = { x: 0, y: 0, z: 0 };
+        function handleMotion(event) {
+            if(!state.isTracking) return;
+
+            const acc = event.accelerationIncludingGravity;
+            if(!acc) return;
+
+            // Calculate magnitude vector
+            const magnitude = Math.sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
+            const normalizedG = magnitude / 9.8; // Convert to Gs
+
+            updateAccelChart(normalizedG);
+            elGForce.innerText = `Total G: ${normalizedG.toFixed(2)}`;
+
+            // Step Detection (Peak Detection)
+            // Threshold: 1.2G usually indicates a step/jog impact
+            const threshold = 1.2; 
+            const now = Date.now();
+            
+            if(normalizedG > threshold && (now - state.lastStepTime > 300)) {
+                // Simple debounce to prevent double counting one step
+                registerStep();
+                state.lastStepTime = now;
+            }
+        }
+
+        let startCoords = null;
+        function handleGPS(position) {
+            if(!state.isTracking) return;
+            
+            // Convert Lat/Lon to meters relative to start (Rough approximation)
+            if(!startCoords) startCoords = position.coords;
+
+            // 111139 meters in a degree
+            const relX = (position.coords.longitude - startCoords.longitude) * 111139 * Math.cos(startCoords.latitude * (Math.PI/180));
+            const relY = (position.coords.latitude - startCoords.latitude) * 111139;
+
+            // Push Raw
+            state.path.push({ x: relX, y: relY, type: 'raw' });
+
+            // Apply Smoothing (Sensor Fusion Light)
+            // If GPS accuracy is bad (>20m), trust the previous position + accelerometer estimate more
+            const accuracy = position.coords.accuracy || 10;
+            const trustFactor = accuracy < 10 ? 0.5 : 0.1; 
+
+            if(state.path.length < 3) {
+                state.currentPos = { x: relX, y: relY };
+            } else {
+                state.currentPos.x = state.currentPos.x * (1 - trustFactor) + relX * trustFactor;
+                state.currentPos.y = state.currentPos.y * (1 - trustFactor) + relY * trustFactor;
+            }
+
+            state.path.push({ x: state.currentPos.x, y: state.currentPos.y, type: 'smooth' });
+
+            // Update distance (using Haversine or simple Euclidean for short distances)
+            if(state.path.length > 2) {
+                const prev = state.path[state.path.length - 3];
+                if(prev.type === 'smooth') {
+                    const dx = state.currentPos.x - prev.x;
+                    const dy = state.currentPos.y - prev.y;
+                    const segDist = Math.sqrt(dx*dx + dy*dy);
+                    // Filter jitter when standing still
+                    if(segDist > 0.5) state.distance += segDist;
+                }
+            }
+
+            updateUI();
+            drawMap();
+        }
+
+        // --- Shared Logic ---
+
+        function registerStep() {
+            state.steps++;
+            elSteps.innerText = state.steps;
+            // Visual feedback on chart container
+            document.getElementById('accelChart').parentElement.classList.add('scale-105', 'transition-transform');
+            setTimeout(() => document.getElementById('accelChart').parentElement.classList.remove('scale-105'), 100);
+        }
+
+        function updateAccelChart(val) {
+            const data = accelChart.data.datasets[0].data;
+            data.shift();
+            data.push(val);
+            accelChart.update('none'); // 'none' for performance
+        }
+
+        function updateUI() {
+            // Distance
+            elDist.innerText = Math.floor(state.distance);
+
+            // Pace calculation
+            const durationMinutes = (Date.now() - state.startTime) / 60000;
+            const distanceKm = state.distance / 1000;
+            
+            if(distanceKm > 0.01) {
+                const pace = durationMinutes / distanceKm;
+                const min = Math.floor(pace);
+                const sec = Math.floor((pace - min) * 60);
+                elPace.innerText = `${min}'${sec.toString().padStart(2, '0')}"`;
+            }
+        }
+
+        function resetData() {
+            clearInterval(state.simInterval);
+            window.removeEventListener('devicemotion', handleMotion);
+            state.isTracking = false;
+            state.isSimulating = false;
+            state.steps = 0;
+            state.distance = 0;
+            state.path = [];
+            state.currentPos = { x: 0, y: 0 };
+            startCoords = null;
+
+            // UI Reset
+            elSteps.innerText = '0';
+            elDist.innerText = '0';
+            elPace.innerText = '--';
+            updateStatus('Idle', 'bg-slate-500');
+            
+            // Clear Map
+            ctxMap.fillStyle = '#0f172a';
+            ctxMap.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+        }
+
+        function updateStatus(text, colorClass) {
+            statusText.innerText = text;
+            statusInd.className = `w-2 h-2 rounded-full ${colorClass} animate-pulse`;
+        }
+
+        // --- Event Listeners ---
+        btnSimulate.addEventListener('click', startSimulation);
+        btnTrack.addEventListener('click', startTracking);
+        btnReset.addEventListener('click', resetData);
+
+    </script>
+</body>
+</html>
