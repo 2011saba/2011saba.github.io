@@ -2,545 +2,326 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RunTech: Sensor Fusion Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>GeoTracker</title>
+    
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    
     <style>
-        body {
-            background-color: #0f172a;
-            color: #e2e8f0;
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            overflow-x: hidden;
+        /* Custom styles to ensure full height and no scrolling on body */
+        body, html {
+            height: 100%;
+            margin: 0;
+            overflow: hidden;
+            font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
-        .glass-panel {
-            background: rgba(30, 41, 59, 0.7);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
+        
+        /* Custom Leaflet Marker Pulse */
+        .user-marker {
+            background-color: #3b82f6;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+            display: block;
         }
-        canvas {
-            touch-action: none;
-        }
-        .metric-value {
-            font-variant-numeric: tabular-nums;
-        }
-        /* Custom scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #0f172a; 
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #334155; 
-            border-radius: 4px;
-        }
+
+        /* Map z-index handling */
+        .leaflet-pane { z-index: 0 !important; }
+        .leaflet-top, .leaflet-bottom { z-index: 10 !important; }
     </style>
 </head>
-<body class="min-h-screen flex flex-col">
+<body class="bg-gray-100 flex flex-col h-full relative">
 
-    <!-- Header -->
-    <header class="p-4 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50 backdrop-blur">
-        <div class="max-w-6xl mx-auto flex justify-between items-center">
-            <div class="flex items-center gap-2">
-                <i class="fa-solid fa-person-running text-emerald-400 text-2xl"></i>
-                <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-cyan-500">
-                    RunTech <span class="text-slate-500 text-sm font-normal">Sensor Fusion</span>
-                </h1>
+    <!-- Top Bar -->
+    <div class="bg-white shadow-md z-20 p-4 flex justify-between items-center flex-shrink-0">
+        <div class="flex items-center gap-2">
+            <div id="status-icon-container" class="p-2 rounded-full bg-gray-100 text-gray-600 transition-colors duration-300">
+                <!-- Navigation Icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="status-icon"><polygon points="3 11 22 2 13 21 11 13 3 11"></polygon></svg>
             </div>
-            <div class="text-xs text-slate-400 flex items-center gap-2">
-                <span id="status-indicator" class="w-2 h-2 rounded-full bg-red-500"></span>
-                <span id="status-text">Idle</span>
+            <div>
+                <h1 class="font-bold text-lg text-gray-800 leading-tight">GeoTracker</h1>
+                <p id="status-text" class="text-xs text-gray-500">Ready to track</p>
             </div>
         </div>
-    </header>
+        
+        <!-- Error Message (Hidden by default) -->
+        <div id="error-msg" class="hidden text-red-500 text-xs bg-red-50 px-2 py-1 rounded"></div>
+    </div>
 
-    <!-- Main Content -->
-    <main class="flex-grow p-4 space-y-4 max-w-6xl mx-auto w-full">
+    <!-- Map Container -->
+    <div class="flex-grow relative z-0">
+        <div id="map" class="absolute inset-0 bg-gray-200"></div>
+        
+        <!-- Current Location Overlay -->
+        <div id="coords-overlay" class="hidden absolute top-4 right-4 z-[400] bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-mono shadow border border-gray-200 text-gray-600 pointer-events-none">
+            0.00000, 0.00000
+        </div>
+    </div>
+
+    <!-- Stats Panel -->
+    <div class="bg-white/90 backdrop-blur-sm border-t border-gray-200 p-6 z-20 pb-8 flex-shrink-0 transition-all duration-300">
+        <!-- Stats Grid -->
+        <div class="grid grid-cols-2 gap-4 mb-6">
+            <!-- Distance -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
+                <div class="flex items-center gap-2 text-gray-400 text-xs uppercase tracking-wider mb-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0l12.6 12.6z"></path><line x1="13" y1="7" x2="14" y2="8"></line><line x1="9" y1="11" x2="10" y2="12"></line><line x1="5" y1="15" x2="6" y2="16"></line><line x1="19" y1="19" x2="21" y2="21"></line></svg>
+                    Distance
+                </div>
+                <div id="distance-display" class="text-2xl font-black text-gray-800">0 m</div>
+            </div>
+            
+            <!-- Speed -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center">
+                <div class="flex items-center gap-2 text-gray-400 text-xs uppercase tracking-wider mb-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+                    Speed
+                </div>
+                <div class="text-2xl font-black text-gray-800">
+                    <span id="speed-display">0.0</span> <span class="text-sm font-normal text-gray-500">km/h</span>
+                </div>
+            </div>
+        </div>
 
         <!-- Controls -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <!-- Mode Selection -->
-            <div class="glass-panel p-4 flex flex-col justify-center gap-3">
-                <h2 class="text-sm uppercase tracking-wider text-slate-400 font-semibold">Operation Mode</h2>
-                <div class="flex gap-2">
-                    <button id="btn-simulate" class="flex-1 py-2 px-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition text-sm font-medium flex items-center justify-center gap-2">
-                        <i class="fa-solid fa-laptop-code"></i> Simulate Run
-                    </button>
-                    <button id="btn-track" class="flex-1 py-2 px-4 bg-emerald-600 hover:bg-emerald-500 rounded-lg transition text-sm font-medium flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/50">
-                        <i class="fa-solid fa-satellite-dish"></i> Live Track
-                    </button>
-                </div>
-                <button id="btn-reset" class="w-full py-1 text-xs text-slate-500 hover:text-slate-300">
-                    Reset Data
-                </button>
-            </div>
+        <div class="flex gap-3">
+            <button id="toggle-btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-200">
+                <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="block"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <svg id="pause-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="hidden"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                <span id="btn-text">Start Tracking</span>
+            </button>
 
-            <!-- Stats Dashboard -->
-            <div class="grid grid-cols-3 gap-2">
-                <div class="glass-panel p-3 flex flex-col items-center justify-center">
-                    <span class="text-xs text-slate-400">Steps</span>
-                    <span id="stat-steps" class="text-2xl font-bold text-white metric-value">0</span>
-                    <i class="fa-solid fa-shoe-prints text-slate-600 text-xs mt-1"></i>
-                </div>
-                <div class="glass-panel p-3 flex flex-col items-center justify-center">
-                    <span class="text-xs text-slate-400">Distance</span>
-                    <span id="stat-dist" class="text-2xl font-bold text-cyan-400 metric-value">0</span>
-                    <span class="text-[10px] text-slate-500">METERS</span>
-                </div>
-                <div class="glass-panel p-3 flex flex-col items-center justify-center">
-                    <span class="text-xs text-slate-400">Pace</span>
-                    <span id="stat-pace" class="text-2xl font-bold text-emerald-400 metric-value">--</span>
-                    <span class="text-[10px] text-slate-500">MIN/KM</span>
-                </div>
-            </div>
+            <button id="reset-btn" class="bg-gray-200 hover:bg-gray-300 text-gray-700 p-3 rounded-xl flex items-center justify-center transition-all active:scale-95" title="Reset Path">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+            </button>
         </div>
+    </div>
 
-        <!-- Main Visualizer (GPS Map) -->
-        <div class="glass-panel p-1 relative h-64 md:h-96 overflow-hidden">
-            <div class="absolute top-3 left-3 z-10 bg-slate-900/80 px-2 py-1 rounded text-xs border border-slate-700 pointer-events-none">
-                <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500"></span> Raw GPS (Noisy)</div>
-                <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-cyan-400"></span> Sensor Fusion (Smoothed)</div>
-            </div>
-            <canvas id="mapCanvas" class="w-full h-full rounded-lg bg-slate-900 cursor-move"></canvas>
-            
-            <!-- Contextual Overlay for explaining concepts -->
-            <div id="simulation-overlay" class="hidden absolute bottom-4 left-4 right-4 bg-slate-800/90 p-3 rounded border border-yellow-500/30 text-xs text-yellow-100">
-                <i class="fa-solid fa-lightbulb text-yellow-400 mr-1"></i> 
-                <span id="simulation-text">Algorithm smoothing data...</span>
-            </div>
-        </div>
-
-        <!-- Accelerometer Data -->
-        <div class="glass-panel p-4">
-            <div class="flex justify-between items-center mb-2">
-                <h3 class="text-sm font-semibold text-slate-300">Accelerometer (Step Detection)</h3>
-                <span id="g-force" class="text-xs font-mono text-slate-400">Total G: 1.00</span>
-            </div>
-            <div class="h-24 w-full">
-                <canvas id="accelChart"></canvas>
-            </div>
-            <div class="mt-2 text-[10px] text-slate-500 text-center">
-                Shows the "Total Magnitude" of forces. Spikes > Threshold = Step.
-            </div>
-        </div>
-
-        <!-- Explanation Section -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-400">
-            <div class="glass-panel p-3">
-                <strong class="text-slate-200 block mb-1">1. Raw Input</strong>
-                GPS satellites provide coordinates, but they "drift" due to signal reflection off buildings (Multipath error).
-            </div>
-            <div class="glass-panel p-3">
-                <strong class="text-slate-200 block mb-1">2. Kalman Filter</strong>
-                The app predicts your next spot based on previous speed. If raw GPS jumps too far, it's ignored/weighted down.
-            </div>
-            <div class="glass-panel p-3">
-                <strong class="text-slate-200 block mb-1">3. Dead Reckoning</strong>
-                If signal is lost, the accelerometer (step count) + compass estimates your path until GPS returns.
-            </div>
-        </div>
-
-    </main>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
     <script>
-        // --- State Management ---
-        const state = {
-            isTracking: false,
-            isSimulating: false,
-            steps: 0,
-            distance: 0,
-            startTime: null,
-            path: [], // {x, y, type: 'raw' | 'smooth'}
-            currentPos: { x: 0, y: 0 },
-            velocity: { x: 0, y: 0 },
-            lastStepTime: 0,
-            simInterval: null
-        };
+        // --- State Variables ---
+        let isTracking = false;
+        let distance = 0; // meters
+        let speed = 0; // km/h
+        let path = []; // Array of [lat, lng]
+        let watchId = null;
+        let map, marker, polyline;
 
         // --- DOM Elements ---
-        const btnTrack = document.getElementById('btn-track');
-        const btnSimulate = document.getElementById('btn-simulate');
-        const btnReset = document.getElementById('btn-reset');
+        const toggleBtn = document.getElementById('toggle-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const btnText = document.getElementById('btn-text');
+        const playIcon = document.getElementById('play-icon');
+        const pauseIcon = document.getElementById('pause-icon');
+        const distanceDisplay = document.getElementById('distance-display');
+        const speedDisplay = document.getElementById('speed-display');
+        const statusIconContainer = document.getElementById('status-icon-container');
+        const statusIcon = statusIconContainer.querySelector('.status-icon');
         const statusText = document.getElementById('status-text');
-        const statusInd = document.getElementById('status-indicator');
-        const elSteps = document.getElementById('stat-steps');
-        const elDist = document.getElementById('stat-dist');
-        const elPace = document.getElementById('stat-pace');
-        const elGForce = document.getElementById('g-force');
-        const simOverlay = document.getElementById('simulation-overlay');
-        const simText = document.getElementById('simulation-text');
+        const errorMsg = document.getElementById('error-msg');
+        const coordsOverlay = document.getElementById('coords-overlay');
 
-        // --- Chart.js Setup (Accelerometer) ---
-        const ctxAccel = document.getElementById('accelChart').getContext('2d');
-        const accelChart = new Chart(ctxAccel, {
-            type: 'line',
-            data: {
-                labels: Array(50).fill(''),
-                datasets: [{
-                    label: 'Force Magnitude',
-                    data: Array(50).fill(1),
-                    borderColor: '#10b981',
-                    borderWidth: 1.5,
-                    tension: 0.4,
-                    pointRadius: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    y: { min: 0, max: 2.5, grid: { color: '#334155' } },
-                    x: { display: false }
-                }
-            }
-        });
-
-        // --- Map Canvas Setup ---
-        const mapCanvas = document.getElementById('mapCanvas');
-        const ctxMap = mapCanvas.getContext('2d');
-        let mapScale = 4; // Zoom level
-        let mapOffset = { x: mapCanvas.width / 2, y: mapCanvas.height / 2 };
-
-        function resizeCanvas() {
-            mapCanvas.width = mapCanvas.offsetWidth;
-            mapCanvas.height = mapCanvas.offsetHeight;
-            mapOffset = { x: mapCanvas.width / 2, y: mapCanvas.height / 2 };
+        // --- Helper Functions ---
+        
+        // Haversine Formula
+        function getDistanceFromLatLonInMeters(lat1, lon1, lat2, lon2) {
+            const R = 6371e3; 
+            const dLat = ((lat2 - lat1) * Math.PI) / 180;
+            const dLon = ((lon2 - lon1) * Math.PI) / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
+                      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
         }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
 
-        // --- Logic: Drawing the Map ---
-        function drawMap() {
-            // Clear
-            ctxMap.fillStyle = '#0f172a';
-            ctxMap.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+        function formatDistance(meters) {
+            if (meters > 1000) return `${(meters / 1000).toFixed(2)} km`;
+            return `${Math.round(meters)} m`;
+        }
 
-            // Draw Grid
-            ctxMap.strokeStyle = '#1e293b';
-            ctxMap.lineWidth = 1;
-            const gridSize = 50;
-            const offX = mapOffset.x % gridSize;
-            const offY = mapOffset.y % gridSize;
-            
-            ctxMap.beginPath();
-            for(let x = offX; x < mapCanvas.width; x += gridSize) {
-                ctxMap.moveTo(x, 0);
-                ctxMap.lineTo(x, mapCanvas.height);
-            }
-            for(let y = offY; y < mapCanvas.height; y += gridSize) {
-                ctxMap.moveTo(0, y);
-                ctxMap.lineTo(mapCanvas.width, y);
-            }
-            ctxMap.stroke();
+        // --- Map Initialization ---
+        function initMap() {
+            // Initialize map view
+            map = L.map('map').setView([0, 0], 2);
 
-            // We need to center the drawing on the current Smoothed position
-            const centerX = mapCanvas.width / 2;
-            const centerY = mapCanvas.height / 2;
+            // Add OSM Tiles
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
 
-            // Draw Raw Points (Red)
-            state.path.forEach(p => {
-                if(p.type === 'raw') {
-                    const drawX = centerX + (p.x - state.currentPos.x) * mapScale;
-                    const drawY = centerY + (p.y - state.currentPos.y) * mapScale;
-                    
-                    ctxMap.fillStyle = 'rgba(239, 68, 68, 0.4)'; // Red with opacity
-                    ctxMap.beginPath();
-                    ctxMap.arc(drawX, drawY, 3, 0, Math.PI * 2);
-                    ctxMap.fill();
-                }
+            // Custom User Icon
+            const userIcon = L.divIcon({
+                className: 'custom-div-icon',
+                html: `<div class="user-marker"></div>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
             });
 
-            // Draw Smoothed Path (Cyan/Green)
-            ctxMap.beginPath();
-            ctxMap.strokeStyle = '#22d3ee';
-            ctxMap.lineWidth = 3;
-            let first = true;
-            state.path.forEach(p => {
-                if(p.type === 'smooth') {
-                    const drawX = centerX + (p.x - state.currentPos.x) * mapScale;
-                    const drawY = centerY + (p.y - state.currentPos.y) * mapScale;
-                    if(first) { ctxMap.moveTo(drawX, drawY); first = false; }
-                    else { ctxMap.lineTo(drawX, drawY); }
-                }
-            });
-            ctxMap.stroke();
+            // Initialize Layers
+            marker = L.marker([0, 0], { icon: userIcon }).addTo(map);
+            polyline = L.polyline([], { color: '#ef4444', weight: 4 }).addTo(map);
 
-            // Draw User Marker
-            ctxMap.fillStyle = '#10b981';
-            ctxMap.beginPath();
-            ctxMap.arc(centerX, centerY, 6, 0, Math.PI * 2);
-            ctxMap.fill();
-            ctxMap.strokeStyle = '#fff';
-            ctxMap.lineWidth = 2;
-            ctxMap.stroke();
-            
-            // Pulse effect
-            const pulseSize = (Date.now() % 1000) / 1000 * 10;
-            ctxMap.strokeStyle = `rgba(16, 185, 129, ${1 - (pulseSize/10)})`;
-            ctxMap.beginPath();
-            ctxMap.arc(centerX, centerY, 6 + pulseSize, 0, Math.PI * 2);
-            ctxMap.stroke();
-        }
-
-        // --- Logic: Simulation Mode ---
-        function startSimulation() {
-            resetData();
-            state.isSimulating = true;
-            state.startTime = Date.now();
-            updateStatus('Simulating Run', 'bg-blue-500');
-            simOverlay.classList.remove('hidden');
-
-            let angle = 0;
-            const radius = 50; // meters
-            const center = { x: 0, y: 0 };
-            let stepTicker = 0;
-
-            state.simInterval = setInterval(() => {
-                // 1. Generate "True" Position (Circle)
-                angle += 0.05;
-                const trueX = center.x + Math.cos(angle) * radius;
-                const trueY = center.y + Math.sin(angle) * radius;
-
-                // 2. Generate "Noisy" GPS Reading (Raw Data)
-                // Add random error (Gaussian noise simulation)
-                const errorMagnitude = (Math.random() - 0.5) * 15; // +/- 7.5 meters error
-                const rawX = trueX + errorMagnitude;
-                const rawY = trueY + (Math.random() - 0.5) * 15;
-
-                // 3. Apply "Sensor Fusion" (Smoothing Algorithm)
-                // Simple weighted average (Kalman Filter Lite)
-                // New = Old * 0.8 + Raw * 0.2
-                const smoothFactor = 0.15; 
-                if (state.path.length === 0) {
-                    state.currentPos = { x: rawX, y: rawY };
-                } else {
-                    state.currentPos.x = state.currentPos.x * (1 - smoothFactor) + rawX * smoothFactor;
-                    state.currentPos.y = state.currentPos.y * (1 - smoothFactor) + rawY * smoothFactor;
-                }
-
-                // Update Data Arrays
-                state.path.push({ x: rawX, y: rawY, type: 'raw' });
-                state.path.push({ x: state.currentPos.x, y: state.currentPos.y, type: 'smooth' });
-
-                // Simulate Steps (Accelerometer)
-                stepTicker++;
-                let force = 1.0; // Gravity
-                if(stepTicker % 10 === 0) {
-                    force = 1.8 + Math.random() * 0.5; // Step impact
-                    registerStep();
-                } else {
-                    force = 1.0 + (Math.random() - 0.5) * 0.1; // Standing noise
-                }
-                updateAccelChart(force);
-
-                // Calculate Distance
-                if(state.path.length > 2) {
-                    // Simple distance calc between last two smooth points
-                    const prev = state.path[state.path.length - 3]; // -1 is smooth, -2 is raw
-                    if(prev && prev.type === 'smooth') {
-                        const dx = state.currentPos.x - prev.x;
-                        const dy = state.currentPos.y - prev.y;
-                        state.distance += Math.sqrt(dx*dx + dy*dy);
-                    }
-                }
-
-                updateUI();
-                drawMap();
-
-                // Contextual tips in simulation
-                if(Math.random() > 0.95) {
-                    const tips = [
-                        "GPS drifted! Ignoring outlier point.",
-                        "Signal valid. Updating position.",
-                        "Detecting step impact...",
-                        "Smoothing trajectory curve."
-                    ];
-                    simText.innerText = tips[Math.floor(Math.random() * tips.length)];
-                }
-
-            }, 200); // Update every 200ms
-        }
-
-        // --- Logic: Real Tracking ---
-        function startTracking() {
-            resetData();
-            simOverlay.classList.add('hidden');
-            
-            // Check for iOS permission requirements
-            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(response => {
-                        if (response === 'granted') {
-                            initSensors();
-                        } else {
-                            alert('Permission needed for step counting');
-                        }
-                    })
-                    .catch(console.error);
-            } else {
-                initSensors();
-            }
-        }
-
-        function initSensors() {
-            state.isTracking = true;
-            state.startTime = Date.now();
-            updateStatus('Tracking Live', 'bg-emerald-500');
-
-            // 1. Accelerometer (Step Counting)
-            window.addEventListener('devicemotion', handleMotion);
-
-            // 2. GPS
-            if("geolocation" in navigator) {
-                navigator.geolocation.watchPosition(
-                    handleGPS, 
-                    (err) => console.error(err),
-                    { enableHighAccuracy: true, maximumAge: 0 }
+            // Initial Geolocation to center map
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (pos) => {
+                        const { latitude, longitude } = pos.coords;
+                        const latLng = [latitude, longitude];
+                        map.setView(latLng, 16);
+                        marker.setLatLng(latLng);
+                        updateCoordsOverlay(latitude, longitude);
+                    },
+                    (err) => {
+                        console.warn("Initial location failed:", err.message);
+                        showError("Location access needed to center map.");
+                    },
+                    { enableHighAccuracy: true }
                 );
-            } else {
-                alert("Geolocation not supported on this device.");
             }
         }
 
-        let lastAccel = { x: 0, y: 0, z: 0 };
-        function handleMotion(event) {
-            if(!state.isTracking) return;
-
-            const acc = event.accelerationIncludingGravity;
-            if(!acc) return;
-
-            // Calculate magnitude vector
-            const magnitude = Math.sqrt(acc.x*acc.x + acc.y*acc.y + acc.z*acc.z);
-            const normalizedG = magnitude / 9.8; // Convert to Gs
-
-            updateAccelChart(normalizedG);
-            elGForce.innerText = `Total G: ${normalizedG.toFixed(2)}`;
-
-            // Step Detection (Peak Detection)
-            // Threshold: 1.2G usually indicates a step/jog impact
-            const threshold = 1.2; 
-            const now = Date.now();
-            
-            if(normalizedG > threshold && (now - state.lastStepTime > 300)) {
-                // Simple debounce to prevent double counting one step
-                registerStep();
-                state.lastStepTime = now;
-            }
-        }
-
-        let startCoords = null;
-        function handleGPS(position) {
-            if(!state.isTracking) return;
-            
-            // Convert Lat/Lon to meters relative to start (Rough approximation)
-            if(!startCoords) startCoords = position.coords;
-
-            // 111139 meters in a degree
-            const relX = (position.coords.longitude - startCoords.longitude) * 111139 * Math.cos(startCoords.latitude * (Math.PI/180));
-            const relY = (position.coords.latitude - startCoords.latitude) * 111139;
-
-            // Push Raw
-            state.path.push({ x: relX, y: relY, type: 'raw' });
-
-            // Apply Smoothing (Sensor Fusion Light)
-            // If GPS accuracy is bad (>20m), trust the previous position + accelerometer estimate more
-            const accuracy = position.coords.accuracy || 10;
-            const trustFactor = accuracy < 10 ? 0.5 : 0.1; 
-
-            if(state.path.length < 3) {
-                state.currentPos = { x: relX, y: relY };
-            } else {
-                state.currentPos.x = state.currentPos.x * (1 - trustFactor) + relX * trustFactor;
-                state.currentPos.y = state.currentPos.y * (1 - trustFactor) + relY * trustFactor;
-            }
-
-            state.path.push({ x: state.currentPos.x, y: state.currentPos.y, type: 'smooth' });
-
-            // Update distance (using Haversine or simple Euclidean for short distances)
-            if(state.path.length > 2) {
-                const prev = state.path[state.path.length - 3];
-                if(prev.type === 'smooth') {
-                    const dx = state.currentPos.x - prev.x;
-                    const dy = state.currentPos.y - prev.y;
-                    const segDist = Math.sqrt(dx*dx + dy*dy);
-                    // Filter jitter when standing still
-                    if(segDist > 0.5) state.distance += segDist;
-                }
-            }
-
-            updateUI();
-            drawMap();
-        }
-
-        // --- Shared Logic ---
-
-        function registerStep() {
-            state.steps++;
-            elSteps.innerText = state.steps;
-            // Visual feedback on chart container
-            document.getElementById('accelChart').parentElement.classList.add('scale-105', 'transition-transform');
-            setTimeout(() => document.getElementById('accelChart').parentElement.classList.remove('scale-105'), 100);
-        }
-
-        function updateAccelChart(val) {
-            const data = accelChart.data.datasets[0].data;
-            data.shift();
-            data.push(val);
-            accelChart.update('none'); // 'none' for performance
-        }
+        // --- App Logic ---
 
         function updateUI() {
-            // Distance
-            elDist.innerText = Math.floor(state.distance);
-
-            // Pace calculation
-            const durationMinutes = (Date.now() - state.startTime) / 60000;
-            const distanceKm = state.distance / 1000;
-            
-            if(distanceKm > 0.01) {
-                const pace = durationMinutes / distanceKm;
-                const min = Math.floor(pace);
-                const sec = Math.floor((pace - min) * 60);
-                elPace.innerText = `${min}'${sec.toString().padStart(2, '0')}"`;
+            // Update Buttons
+            if (isTracking) {
+                toggleBtn.className = "flex-1 bg-amber-500 hover:bg-amber-600 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-amber-200";
+                playIcon.classList.add('hidden');
+                pauseIcon.classList.remove('hidden');
+                btnText.textContent = "Pause";
+                
+                statusIconContainer.className = "p-2 rounded-full bg-green-100 text-green-600 transition-colors duration-300";
+                statusIcon.classList.add('animate-pulse');
+                statusText.textContent = "Tracking active...";
+            } else {
+                toggleBtn.className = "flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 px-6 rounded-xl font-bold flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-200";
+                playIcon.classList.remove('hidden');
+                pauseIcon.classList.add('hidden');
+                btnText.textContent = "Start Tracking";
+                
+                statusIconContainer.className = "p-2 rounded-full bg-gray-100 text-gray-600 transition-colors duration-300";
+                statusIcon.classList.remove('animate-pulse');
+                statusText.textContent = "Ready to track";
             }
+
+            // Update Stats
+            distanceDisplay.textContent = formatDistance(distance);
+            speedDisplay.textContent = speed.toFixed(1);
         }
 
-        function resetData() {
-            clearInterval(state.simInterval);
-            window.removeEventListener('devicemotion', handleMotion);
-            state.isTracking = false;
-            state.isSimulating = false;
-            state.steps = 0;
-            state.distance = 0;
-            state.path = [];
-            state.currentPos = { x: 0, y: 0 };
-            startCoords = null;
-
-            // UI Reset
-            elSteps.innerText = '0';
-            elDist.innerText = '0';
-            elPace.innerText = '--';
-            updateStatus('Idle', 'bg-slate-500');
-            
-            // Clear Map
-            ctxMap.fillStyle = '#0f172a';
-            ctxMap.fillRect(0, 0, mapCanvas.width, mapCanvas.height);
+        function updateCoordsOverlay(lat, lng) {
+            coordsOverlay.classList.remove('hidden');
+            coordsOverlay.textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
         }
 
-        function updateStatus(text, colorClass) {
-            statusText.innerText = text;
-            statusInd.className = `w-2 h-2 rounded-full ${colorClass} animate-pulse`;
+        function showError(msg) {
+            errorMsg.textContent = msg;
+            errorMsg.classList.remove('hidden');
+            setTimeout(() => {
+                errorMsg.classList.add('hidden');
+            }, 5000);
+        }
+
+        function startTracking() {
+            if (!navigator.geolocation) {
+                showError("Geolocation is not supported by your browser.");
+                return;
+            }
+
+            isTracking = true;
+            updateUI();
+
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 10000,
+                maximumAge: 0
+            };
+
+            watchId = navigator.geolocation.watchPosition(
+                (position) => {
+                    const { latitude, longitude, speed: geoSpeed } = position.coords;
+                    const newLatLng = [latitude, longitude];
+
+                    // Speed calculation
+                    const currentSpeedKmH = (geoSpeed || 0) * 3.6;
+                    speed = currentSpeedKmH < 1 ? 0 : currentSpeedKmH;
+
+                    // Distance Calculation
+                    if (path.length > 0) {
+                        const lastPoint = path[path.length - 1];
+                        const dist = getDistanceFromLatLonInMeters(lastPoint[0], lastPoint[1], latitude, longitude);
+                        
+                        // Noise filter (3 meters)
+                        if (dist > 3) {
+                            distance += dist;
+                            path.push(newLatLng);
+                            polyline.addLatLng(newLatLng);
+                        }
+                    } else {
+                        // First point
+                        path.push(newLatLng);
+                        polyline.addLatLng(newLatLng);
+                    }
+
+                    // Map Updates
+                    marker.setLatLng(newLatLng);
+                    map.panTo(newLatLng, { animate: true });
+                    updateCoordsOverlay(latitude, longitude);
+                    
+                    // UI Updates
+                    updateUI();
+                    errorMsg.classList.add('hidden');
+                },
+                (err) => {
+                    showError(`Error: ${err.message}`);
+                    stopTracking();
+                },
+                options
+            );
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            if (watchId !== null) {
+                navigator.geolocation.clearWatch(watchId);
+                watchId = null;
+            }
+            updateUI();
+        }
+
+        function resetApp() {
+            stopTracking();
+            distance = 0;
+            speed = 0;
+            path = [];
+            polyline.setLatLngs([]);
+            updateUI();
         }
 
         // --- Event Listeners ---
-        btnSimulate.addEventListener('click', startSimulation);
-        btnTrack.addEventListener('click', startTracking);
-        btnReset.addEventListener('click', resetData);
+        
+        toggleBtn.addEventListener('click', () => {
+            if (isTracking) {
+                stopTracking();
+            } else {
+                startTracking();
+            }
+        });
+
+        resetBtn.addEventListener('click', resetApp);
+
+        // --- Boot ---
+        window.addEventListener('DOMContentLoaded', initMap);
 
     </script>
 </body>
